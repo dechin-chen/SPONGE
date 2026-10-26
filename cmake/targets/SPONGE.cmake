@@ -1,9 +1,12 @@
 set(SPONGE_SOURCES
     ${PROJECT_ROOT_DIR}/SPONGE/main.cpp
+    ${PROJECT_ROOT_DIR}/SPONGE/io/input_session.cpp
+    ${PROJECT_ROOT_DIR}/SPONGE/io/output_session.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/common.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/control.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/xponge/xponge.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/MD_core/MD_core.cpp
+    ${PROJECT_ROOT_DIR}/SPONGE/MD_core/initial_state.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/MD_core/initial_velocity.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/Domain_decomposition/Domain_decomposition.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/neighbor_list/neighbor_list.cpp
@@ -30,6 +33,7 @@ set(SPONGE_SOURCES
     ${PROJECT_ROOT_DIR}/SPONGE/constrain/constrain.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/constrain/settle.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/constrain/shake.cpp
+    ${PROJECT_ROOT_DIR}/SPONGE/constrain/matrix_constraint.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/virtual_atoms/virtual_atoms.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/collective_variable/collective_variable.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/collective_variable/RMSD.cpp

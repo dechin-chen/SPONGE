@@ -3,6 +3,7 @@
 #include <cstring>
 #include <filesystem>
 #include <highfive/highfive.hpp>
+#include <limits>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -11,6 +12,7 @@
 #include "h5_bundle_test_common.hpp"
 #include "h5_input_matrix_fixture.hpp"
 #include "utils/h5md/highfive_backend.hpp"
+#include "utils/h5md/input_context.hpp"
 #include "utils/h5md/input_validation.hpp"
 #include "utils/h5md/protocol_cv_h5.hpp"
 #include "utils/h5md/protocol_metadynamics_h5.hpp"
@@ -225,6 +227,107 @@ static void Test_Protocol_Reader_Loads_Native_CV_Objects()
         REQUIRE_EQ(definitions[1].sigma[0], 0.5f);
     }
     std::filesystem::remove_all(dir);
+}
+
+static void Test_Protocol_Reader_Inline_RMSD_Reference()
+{
+    const std::vector<float> reference = {1, 2, 3, 4, 5, 6};
+    struct Case
+    {
+        std::string type;
+        bool inline_reference;
+        bool restart_reference;
+        bool conflict;
+        int rows;
+        int columns;
+        bool nonfinite;
+        bool atom_refs;
+        std::string error;
+    };
+    const std::vector<Case> cases = {
+        {"rmsd", true, false, false, 2, 3, false, false, ""},
+        {"rmsd", true, false, false, 2, 3, false, true, ""},
+        {"rmsd", true, true, false, 2, 3, false, false, ""},
+        {"rmsd", false, true, false, 2, 3, false, false, ""},
+        {"rmsd", true, true, true, 2, 3, false, false, "conflicts"},
+        {"rmsd", false, false, false, 2, 3, false, false, "is required"},
+        {"rmsd", true, false, false, 1, 3, false, false, "must have shape"},
+        {"rmsd", true, false, false, 3, 2, false, false, "must have shape"},
+        {"rmsd", true, false, false, 2, 3, true, false, "finite"},
+        {"distance", true, false, false, 2, 3, false, false,
+         "only supported for rmsd"},
+    };
+    for (const auto& item : cases)
+    {
+        const auto dir = Unique_Temp_Path("protocol_inline_rmsd");
+        std::filesystem::create_directories(dir);
+        const auto protocol = dir / "protocol.spgp.h5";
+        const auto restart = dir / "restart.spgr.h5";
+        {
+            HighFive::File file(protocol.string(), HighFive::File::Overwrite);
+            Write_Scalar(file, "/cv/backbone/type", item.type);
+            if (item.atom_refs)
+                Write_String_Vector(file, "/cv/backbone/atom_refs", {"0", "1"});
+            else
+                Write_Int64_Vector(file, "/cv/backbone/atom_indices", {0, 1});
+            if (item.inline_reference)
+            {
+                auto values = reference;
+                values.resize(item.rows * item.columns);
+                if (item.nonfinite)
+                    values[0] = std::numeric_limits<float>::quiet_NaN();
+                Write_Matrix(file, "/cv/backbone/coordinate", values, item.rows,
+                             item.columns);
+            }
+        }
+        if (item.restart_reference)
+        {
+            auto values = reference;
+            if (item.conflict) values[0] += 1;
+            HighFiveBackend backend;
+            RestartH5Writer writer(&backend);
+            SpongeH5OutputPlan::ResolvedOutputPlan plan;
+            plan.restart.enabled = true;
+            plan.restart.path = restart.string();
+            REQUIRE_TRUE(writer.Open(plan, SpongeH5MD::kInputSchemaVersion));
+            REQUIRE_TRUE(writer.Write_Lineage("top", "atoms", "protocol"));
+            REQUIRE_TRUE(writer.Define_Structural_State(2, false));
+            const std::array<float, 9> box = {10, 0, 0, 0, 10, 0, 0, 0, 10};
+            REQUIRE_TRUE(writer.Write_Structural_State(0, 0.0, reference.data(),
+                                                       box.data(), nullptr));
+            REQUIRE_TRUE(
+                writer.Write_CV_Reference("backbone", values.data(), 2));
+            REQUIRE_TRUE(writer.Finalize());
+            REQUIRE_TRUE(writer.Close());
+        }
+        {
+            ProtocolCVH5Reader reader;
+            REQUIRE_TRUE(reader.Open_Protocol(protocol.string()));
+            if (item.restart_reference)
+                REQUIRE_TRUE(reader.Open_Restart(restart.string()));
+            std::vector<ProtocolCVDefinition> definitions;
+            const bool ok = reader.Read_Definitions(2, &definitions);
+            if (item.error.empty())
+            {
+                REQUIRE_TRUE(ok);
+                REQUIRE_EQ(definitions.size(), static_cast<std::size_t>(1));
+                REQUIRE_EQ(definitions[0].reference_coordinates, reference);
+                REQUIRE_TRUE(
+                    std::find(definitions[0].runtime_parameters.begin(),
+                              definitions[0].runtime_parameters.end(),
+                              std::make_pair(std::string("coordinate"),
+                                             std::string("1 2 3 4 5 6"))) !=
+                    definitions[0].runtime_parameters.end());
+            }
+            else
+            {
+                REQUIRE_TRUE(!ok);
+                REQUIRE_TRUE(reader.Last_Error().find(item.error) !=
+                             std::string::npos);
+            }
+        }
+        std::filesystem::remove_all(dir);
+    }
 }
 
 static void Test_Protocol_Reader_Loads_Typed_Virtual_Atoms()
@@ -1421,6 +1524,71 @@ static void Test_Protocol_Readers_Share_One_File_Lifetime()
     std::filesystem::remove_all(dir);
 }
 
+static void Test_Input_Context_Caches_And_Releases_Launch_State()
+{
+    const auto dir = Unique_Temp_Path("h5_input_context");
+    std::filesystem::create_directories(dir);
+    const auto topology = dir / "system.spgt.h5";
+    const auto protocol = dir / "protocol.spgp.h5";
+    const auto restart = dir / "restart.spgr.h5";
+    Write_Topology_Metadata(topology, 2);
+    {
+        HighFive::File file(topology.string(), HighFive::File::ReadWrite);
+        Write_Float_Vector(file, "/atoms/mass", {12.0f, 16.0f});
+    }
+    Write_Protocol_Metadata(protocol, "top");
+    Write_Restart_File(restart, 2, true, true);
+    CONTROLLER controller;
+    controller.Set("input_h5_topology_path", topology.string());
+    controller.Set("input_h5_protocol_path", protocol.string());
+    controller.Set("input_h5_restart_path", restart.string());
+    controller.Set("input_h5_restart_load", "full");
+
+    InputContext context;
+    REQUIRE_TRUE(context.Topology() == nullptr);
+    REQUIRE_TRUE(context.Initial(&controller));
+    const auto* core = context.Topology();
+    REQUIRE_TRUE(core != nullptr);
+    REQUIRE_EQ(core->mass, std::vector<float>({12.0f, 16.0f}));
+    // A later initialization phase must consume the same launch payload,
+    // even if the path is replaced after the initial read.
+    {
+        HighFive::File file(topology.string(), HighFive::File::ReadWrite);
+        file.getDataSet("/atoms/mass").write(std::vector<float>{1.0f, 2.0f});
+    }
+    REQUIRE_TRUE(context.Topology() == core);
+    REQUIRE_EQ(context.Topology()->mass, std::vector<float>({12.0f, 16.0f}));
+    const auto* protocol_state = context.Protocol_Restart();
+    REQUIRE_TRUE(protocol_state != nullptr);
+    REQUIRE_EQ(protocol_state->sits_states.size(), std::size_t(1));
+    const auto* dynamic_state = context.Dynamic_Restart();
+    REQUIRE_TRUE(dynamic_state != nullptr);
+    REQUIRE_TRUE(dynamic_state->has_nose_hoover_chain);
+    REQUIRE_TRUE(context.Protocol_Restart() == protocol_state);
+    REQUIRE_TRUE(context.Dynamic_Restart() == dynamic_state);
+
+    // Initial starts a fresh session, invalidating all previous cached state.
+    REQUIRE_TRUE(context.Initial(&controller));
+    REQUIRE_EQ(context.Topology()->mass, std::vector<float>({1.0f, 2.0f}));
+    context.Clear();
+    REQUIRE_TRUE(context.Protocol_Restart() == nullptr);
+    REQUIRE_TRUE(context.Dynamic_Restart() == nullptr);
+    // No restart handle may survive the launch session (including on Windows).
+    REQUIRE_TRUE(std::filesystem::remove(restart));
+
+    REQUIRE_TRUE(!context.Initial(&controller));
+    const auto validation_error = context.Last_Error();
+    REQUIRE_TRUE(!validation_error.empty());
+    REQUIRE_TRUE(context.Topology() == nullptr);
+    REQUIRE_EQ(context.Last_Error(), validation_error);
+    CONTROLLER legacy;
+    REQUIRE_TRUE(context.Initial(&legacy));
+    REQUIRE_TRUE(!context.Plan().any_h5_input_enabled);
+    REQUIRE_TRUE(context.Topology() == nullptr);
+    REQUIRE_TRUE(context.Protocol_Restart() == nullptr);
+    std::filesystem::remove_all(dir);
+}
+
 int main()
 {
     return Run_Test(
@@ -1428,6 +1596,7 @@ int main()
         {
             Test_Protocol_Reader_Loads_Typed_CV_Restraint();
             Test_Protocol_Reader_Loads_Native_CV_Objects();
+            Test_Protocol_Reader_Inline_RMSD_Reference();
             Test_Protocol_Reader_Loads_Typed_Virtual_Atoms();
             Test_Protocol_Reader_Loads_Native_Metadynamics_Object();
             Test_Protocol_Reader_Loads_Native_Steering_Object();
@@ -1456,5 +1625,6 @@ int main()
             Test_ReaxFF_Reader_Loads_Typed_Runtime_Definition();
             Test_Protocol_Reader_Loads_Native_Hard_Wall();
             Test_Protocol_Readers_Share_One_File_Lifetime();
+            Test_Input_Context_Caches_And_Releases_Launch_State();
         });
 }
