@@ -25,6 +25,9 @@ std::string CanonicalCommandKey(const std::string& full_key)
         {"write_interval_mdout", "write_mdout_interval"},
         {"write_interval_restart", "write_restart_file_interval"},
         {"write_interval_restart_file", "write_restart_file_interval"},
+        // Flat shorthand for [xtc] path; the table form already flattens to
+        // xtc_path and needs no alias.
+        {"xtc", "xtc_path"},
     };
 
     for (const auto& alias : aliases)

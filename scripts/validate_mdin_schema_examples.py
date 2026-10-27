@@ -95,6 +95,26 @@ particle_stream = "all"
 information = 1
 mdout = 1
 """,
+    "xtc_trajectory": """
+mode = "npt"
+step_limit = 500000
+dt = 0.002
+pbc = true
+target_temperature = 300.0
+target_pressure = 1.0
+
+trajectory_format = "xtc"
+
+[xtc]
+path = "prod.xtc"
+precision = 1000.0
+flush = true
+buffer_frames = 10
+frame_index = true
+
+[write.interval]
+trajectory = 1000
+""",
 }
 
 

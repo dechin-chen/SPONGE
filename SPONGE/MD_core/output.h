@@ -1,5 +1,10 @@
 ﻿#pragma once
 
+// NOTE: this header is #included *inside* `struct MD_INFORMATION`
+// (see MD_core.h, clang-format off block), together with min.h / sys.h / pbc.h.
+// It must therefore contain declarations only: no #include, no namespace.
+// Required types are provided by MD_core.h's top-level include block.
+
 struct trajectory_output
 {
     MD_INFORMATION* md_info = NULL;
@@ -104,6 +109,25 @@ struct trajectory_output
     void Export_Restart_File(const char* rst7_name = NULL);
     void Append_Crd_Traj_File(FILE* fp = NULL);
     void Append_Box_Traj_File(FILE* fp = NULL);
+#ifdef SPONGE_HAS_XTC
+    // GROMACS XTC trajectory output. Selected by `trajectory_format = "xtc"`,
+    // configured through the [xtc] mdin table.
+    SpongeXTC::XtcTrajectoryWriter xtc_writer;
+    std::string xtc_path;
+    float xtc_precision = 1000.0f;
+    int xtc_buffer_frames = 10;
+    bool xtc_enabled = false;
+    bool xtc_flush = true;
+    bool xtc_frame_index = false;
+    bool xtc_append = false;
+    bool Xtc_Trajectory_Selected() const { return xtc_enabled; }
+    void Initial_Xtc_Trajectory(CONTROLLER* controller);
+    void Append_Xtc_Traj_File(CONTROLLER* controller);
+    void Flush_Xtc_Trajectory(CONTROLLER* controller);
+    void Finalize_Xtc_Trajectory(CONTROLLER* controller);
+#else
+    bool Xtc_Trajectory_Selected() const { return false; }
+#endif
     // 20210827用于输出速度和力
     int is_frc_traj = 0, is_vel_traj = 0;
     int restart_export_count = 0;

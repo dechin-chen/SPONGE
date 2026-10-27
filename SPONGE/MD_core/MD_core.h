@@ -13,6 +13,12 @@
 #include "../utils/h5md/trajectory_h5_reader.hpp"
 #include "../utils/h5md/trajectory_h5_writer.hpp"
 #include "../utils/h5md/vds_trajectory_h5_writer.hpp"
+#ifdef SPONGE_HAS_XTC
+// XTC-format trajectory writer. Must be included here rather than in output.h,
+// which is injected inside `struct MD_INFORMATION` and therefore cannot carry
+// any #include of its own.
+#include "../io/xtc_trajectory_writer.h"
+#endif
 
 // 普通分子模拟所涉及的大部分信息
 struct MD_INFORMATION

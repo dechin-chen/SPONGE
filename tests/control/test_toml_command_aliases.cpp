@@ -101,5 +101,40 @@ update_interval = 200
         error.find("monte_carlo_barostat_update_interval") != std::string::npos,
         "Conflict error should name the canonical Monte Carlo barostat key");
 
+    const std::string xtc_table = R"toml(
+trajectory_format = "xtc"
+
+[xtc]
+path = "prod.xtc"
+precision = 1000.0
+flush = true
+buffer_frames = 10
+frame_index = true
+)toml";
+    commands.clear();
+    error.clear();
+    Expect(sponge::toml_wrap::ParseAndFlatten(xtc_table, "xtc.in.spg.toml",
+                                              &commands, &error),
+           error.c_str());
+    ExpectValue(commands, "trajectory_format", "xtc");
+    ExpectValue(commands, "xtc_path", "prod.xtc");
+    ExpectValue(commands, "xtc_precision", "1000");
+    ExpectValue(commands, "xtc_flush", "true");
+    ExpectValue(commands, "xtc_buffer_frames", "10");
+    ExpectValue(commands, "xtc_frame_index", "true");
+
+    const std::string xtc_flat = R"toml(
+xtc = "prod.xtc"
+xtc_precision = 5000.0
+)toml";
+    commands.clear();
+    error.clear();
+    Expect(sponge::toml_wrap::ParseAndFlatten(xtc_flat, "xtc_flat.in.spg.toml",
+                                              &commands, &error),
+           error.c_str());
+    ExpectValue(commands, "xtc_path", "prod.xtc");
+    Expect(commands.count("xtc") == 0,
+           "Flat xtc alias should normalize to xtc_path");
+
     return 0;
 }

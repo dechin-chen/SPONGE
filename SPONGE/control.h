@@ -181,6 +181,11 @@ struct CONTROLLER
                     const char* reason);
 
     // 输出文件
+    // Resolve the path that Get_Output_File would open, without opening it.
+    // Needed by writers that hand the name to a third-party I/O layer.
+    std::string Resolve_Output_Path(const char* command,
+                                    const char* default_suffix,
+                                    const char* default_filename);
     FILE* Get_Output_File(bool binary, const char* command,
                           const char* default_suffix,
                           const char* default_filename);

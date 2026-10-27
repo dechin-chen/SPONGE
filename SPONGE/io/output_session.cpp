@@ -157,6 +157,9 @@ void OutputSession::Write_Trajectory()
     runtime_.md_info.output.Append_Crd_Traj_File();
     runtime_.md_info.output.Append_Vel_Traj_File();
     runtime_.md_info.output.Append_Box_Traj_File();
+#ifdef SPONGE_HAS_XTC
+    runtime_.md_info.output.Append_Xtc_Traj_File(&runtime_.controller);
+#endif
     if (runtime_.md_info.output.h5_trajectory_force_enabled)
     {
         runtime_.md_info.Frc_dd_to_Host(
@@ -226,6 +229,9 @@ void OutputSession::Close()
 {
     runtime_.md_info.output.Finalize_H5_Trajectory(&runtime_.controller);
     runtime_.md_info.output.Finalize_H5_Observable(&runtime_.controller);
+#ifdef SPONGE_HAS_XTC
+    runtime_.md_info.output.Finalize_Xtc_Trajectory(&runtime_.controller);
+#endif
     if (CONTROLLER::MPI_rank == 0)
     {
         const double h5_finalize_total_s =

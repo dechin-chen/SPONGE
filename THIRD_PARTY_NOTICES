@@ -27,6 +27,17 @@ component retains its own license terms as described below.
     (b) Copyright (c) 2017-2023 Advanced Micro Devices, Inc. — MIT License
     (c) Copyright 2010-2011, D. E. Shaw Research — BSD 3-Clause License
 
+1.4 libxdrfile (modified)
+    Location: SPONGE/third_party/xdrfile/
+    Upstream: libxdrfile 1.1.4, branch `chemfiles` (commit 0d12c95)
+    License: BSD 3-Clause
+    Copyright (c) 2009-2014, Erik Lindahl & David van der Spoel
+    Used for: GROMACS XTC trajectory output
+    Modifications: added xdrfile_flush() and xdrfile_setvbuf() entry points plus
+    an owned stdio buffer field in struct XDRFILE. See
+    SPONGE/third_party/xdrfile/patches/ and README.md for details.
+    Only xdrfile.c and xdrfile_xtc.c are compiled; the TRR sources are omitted.
+
 ------------------------------------------------------------------------------
 2. Open-Source Runtime Dependencies
 ------------------------------------------------------------------------------

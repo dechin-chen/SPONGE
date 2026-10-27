@@ -654,6 +654,61 @@
       "title": "Output",
       "description": "Output container settings."
     },
+      "trajectory_format": {
+        "type": "string",
+        "enum": [
+          "dat",
+          "xtc"
+        ],
+        "title": "Trajectory Format",
+        "description": "Legacy coordinate trajectory format. 'dat' writes mdcrd.dat (raw binary VECTOR frames). 'xtc' writes a GROMACS XTC file in nanometre units with 0.001 nm lossy compression, configured through the [xtc] table.",
+        "default": "dat"
+      },
+      "xtc": {
+        "type": "object",
+        "additionalProperties": false,
+        "title": "XTC Trajectory Output",
+        "description": "GROMACS XTC trajectory settings. Only used when trajectory_format = 'xtc'.",
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "XTC Output Path",
+            "description": "XTC trajectory path. Defaults to mdcrd.xtc, or <default_out_file_prefix>.xtc when a prefix is set.",
+            "default": ""
+          },
+          "precision": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "title": "XTC Precision",
+            "description": "Lossy compression precision. 1000.0 means 0.001 nm (0.01 Angstrom) resolution. Larger values reduce quantization error and enlarge the file.",
+            "default": 1000.0
+          },
+          "flush": {
+            "type": "boolean",
+            "title": "XTC Flush Per Frame",
+            "description": "Flush completed frames to the operating system as they are written, so an interrupted run leaves a readable trajectory ending on a frame boundary.",
+            "default": true
+          },
+          "buffer_frames": {
+            "type": "integer",
+            "title": "XTC Buffer Frames",
+            "description": "Size of the frame-aligned stdio buffer in whole frames. Keeps a single frame from straddling a buffer boundary. Zero keeps the stdio default.",
+            "default": 10
+          },
+          "frame_index": {
+            "type": "boolean",
+            "title": "XTC Frame Index",
+            "description": "Also write <path>.idx holding the end offset of every completed frame, for exact truncation after an abrupt termination.",
+            "default": false
+          },
+          "append": {
+            "type": "boolean",
+            "title": "XTC Append",
+            "description": "Append to an existing XTC trajectory instead of truncating it, so a resumed run continues the same file.",
+            "default": false
+          }
+        }
+      },
     "box": {
       "type": "string",
       "title": "Box",

@@ -210,10 +210,87 @@ complete contiguous shard prefix and does not delete orphan shard files.
 | `frc` | string | - | Legacy force trajectory file (binary) |
 | `box` | string | - | Legacy box information trajectory file, or rerun box input |
 | `rst` | string | `SPONGE` or `default_out_file_prefix` | Legacy restart filename prefix |
+| `trajectory_format` | string | `dat` | Coordinate trajectory format: `dat` or `xtc` |
 
 If any canonical H5 output is enabled, legacy output files are disabled by
 default. Legacy files are written only when their legacy path keys are
-explicitly set.
+explicitly set. `trajectory_format` is not a legacy path key: asking for `xtc`
+is an explicit format request, so it is not suppressed by the H5 sidecar policy
+and the XTC file is opened even when canonical H5 output is active.
+
+### GROMACS XTC Trajectories
+
+Setting `trajectory_format = "xtc"` replaces the binary `mdcrd.dat` coordinate
+trajectory with a GROMACS XTC file. Values are case-insensitive, so `"XTC"` is
+accepted. The two formats are mutually exclusive: only one coordinate
+trajectory is written per run. The legacy box text stream (`mdbox.txt`) and the
+`vel` / `frc` streams are unaffected, because XTC carries positions and the box
+only.
+
+```toml
+trajectory_format = "xtc"
+
+[xtc]
+path = "prod.xtc"
+precision = 1000.0
+flush = true
+buffer_frames = 10
+frame_index = true
+append = false
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | string | `mdcrd.xtc` or `<default_out_file_prefix>.xtc` | XTC output path |
+| `precision` | float | `1000.0` | Lossy precision; `1000.0` means 0.001 nm (0.01 Å) |
+| `flush` | bool | `true` | Flush completed frames to the OS as they are written |
+| `buffer_frames` | int | `10` | Frame-aligned stdio buffer size in whole frames; `0` or less falls back to a single-frame buffer |
+| `frame_index` | bool | `false` | Also write `<path>.idx` with per-frame end offsets |
+| `append` | bool | `false` | Append to an existing trajectory instead of truncating |
+
+The `[xtc]` table is pure sugar: it flattens to `xtc_path`, `xtc_precision`,
+`xtc_flush`, `xtc_buffer_frames`, `xtc_frame_index` and `xtc_append`, and the
+flat spellings are equivalent. Those are the keys the loader reads.
+
+Notes:
+
+- **Schedule.** XTC frames follow `write_trajectory_interval` and are emitted in
+  the same output slot as the legacy coordinate stream, so switching formats
+  does not change which steps are recorded. The frame step is `sys.steps` and
+  the frame time is `sys.Get_Current_Time()` in ps.
+- **Units.** SPONGE works in Ångström; XTC is specified in nanometre. Every
+  coordinate and box edge is scaled by 0.1 on write. This is not configurable:
+  the container carries no unit marker, so a different factor would silently
+  produce a trajectory that every other tool misreads.
+- **Box.** Each frame carries the current cell as a lower-triangular matrix in
+  nm, so the deformed triclinic cell of an NPT run is recorded per frame.
+- **Precision.** XTC is lossy. `precision = 1000.0` quantizes coordinates to
+  0.001 nm (0.01 Å), which is the GROMACS convention. xdrfile stores
+  `coordinate_nm * precision` in a 32-bit integer, so the scaled coordinate has
+  to stay inside that grid: a precision that cannot represent the first frame is
+  rejected while that frame is being written, before any frame reaches the file,
+  instead of silently corrupting coordinates.
+- **Interruption safety.** An XTC frame is self-describing and the container has
+  no trailer, so a file ending on a frame boundary is always readable. With
+  `flush = true` and a frame-aligned `buffer_frames`, a frame never straddles a
+  buffer boundary: an interrupted run leaves every completed frame on disk and
+  drops at most the frame being written. `frame_index = true` additionally
+  stores one 8-byte native-endian end offset per completed frame in
+  `<path>.idx`, flushed as each frame completes, which allows exact truncation
+  after an abrupt kill: truncate the trajectory to the last recorded offset.
+- **Resumed runs.** With `append = true` the writer continues an existing file
+  instead of truncating it, after verifying that its atom count matches the
+  current system. The `.idx` sidecar is appended as well.
+- **Excluded cases.** `trajectory_format = "xtc"` is rejected in `rerun` mode,
+  and setting `crd` alongside it is ignored with a warning.
+- **Build requirement.** The XTC writer is compiled only when the
+  `SPONGE_WITH_XTC` CMake option is on (the default). A build without it
+  rejects `trajectory_format = "xtc"` at initialization instead of silently
+  falling back to the binary format.
+- **Multi-replica runs.** XTC is a single-stream container and cannot represent
+  replicas; use one file per replica.
+- **Read-back.** The output is plain GROMACS XTC, so VMD, PyMOL, MDAnalysis,
+  `gmx trjconv` and `gmx check` read it without conversion.
 
 ## Output Frequency Control
 
@@ -229,6 +306,10 @@ explicitly set.
 For TOML mdin files, `[write.interval] information`, `trajectory`, `mdout`,
 and `restart`/`restart_file` are accepted aliases for the corresponding
 `write_*_interval` keys.
+
+`buffer_frame` sizes the stdio buffer of the legacy binary streams only. The XTC
+writer has its own `[xtc] buffer_frames`, which is expressed in whole frames of
+the compressed format and has no effect on `mdcrd.dat`.
 
 ## Output Content Control
 

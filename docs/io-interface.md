@@ -36,9 +36,9 @@ frames or claim to eliminate every H5 open in the program.
 
 ## Output events
 
-`OutputSession` routes synchronous H5 and legacy output. It exposes schedule
-queries, initialization, output events, publication and closing. Existing
-`MD_INFORMATION::trajectory_output` writers retain the format-specific
+`OutputSession` routes synchronous H5, legacy and XTC output. It exposes
+schedule queries, initialization, output events, publication and closing.
+Existing `MD_INFORMATION::trajectory_output` writers retain the format-specific
 implementation, output plans and per-family failure behavior.
 
 Simulation orchestration invokes events where their source data is ready:
@@ -54,6 +54,23 @@ Simulation orchestration invokes events where their source data is ready:
 
 Streams retain their original `steps`/`steps + 1` and time conventions. Moving
 all module output to one end-of-step callback would change those semantics.
+
+Coordinate trajectory output has two mutually exclusive back ends selected by
+`trajectory_format`: the legacy binary `mdcrd.dat` writer and the GROMACS XTC
+writer. Both run inside `Write_Trajectory()`, after the same coordinate mapping
+and device-to-host transfer, and both are driven by the same
+`write_trajectory_interval` due check, so only the container differs.
+`trajectory_output::Initial` makes the choice: it opens the XTC file and leaves
+the binary coordinate stream closed.
+
+`SpongeXTC::XtcTrajectoryWriter` is the one output path that owns a non-stdio
+handle - an opaque `XDRFILE` from the vendored `libxdrfile` plus an optional
+`.idx` offset file. It is flushed from `Publish()` through the same dirty-flag
+path as the legacy streams and closed by `Close()`, because nothing finalizes
+output when the process is interrupted. XTC is a container choice rather than an
+H5 family, so it is not part of `SpongeH5OutputPlan` and is not suppressed by
+the legacy sidecar policy. Building with `SPONGE_WITH_XTC=OFF` compiles the
+writer out and turns `trajectory_format = "xtc"` into an initialization error.
 
 `RestartOutputState` owns NHC, dynamic, SITS, MetaD, restraint and CV module
 payloads and replaces the positional restart export argument list. Capturing

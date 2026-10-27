@@ -67,6 +67,12 @@ set(SPONGE_SOURCES
     ${PROJECT_ROOT_DIR}/SPONGE/manybody/reaxff/native_init.cpp
     ${PROJECT_ROOT_DIR}/SPONGE/manybody/reaxff/reaxff.cpp)
 
+option(SPONGE_WITH_XTC "Enable GROMACS XTC trajectory output" ON)
+if(SPONGE_WITH_XTC)
+  list(APPEND SPONGE_SOURCES
+       ${PROJECT_ROOT_DIR}/SPONGE/io/xtc_trajectory_writer.cpp)
+endif()
+
 set(SOURCES ${SPONGE_SOURCES})
 
 find_package(tomlplusplus CONFIG REQUIRED)
@@ -100,8 +106,30 @@ set_source_files_properties(
   PROPERTIES LANGUAGE CXX)
 target_include_directories(sponge_jit_header PUBLIC ${PROJECT_ROOT_DIR}/SPONGE)
 
+# Vendored libxdrfile, used for GROMACS XTC trajectory output. Pure C, no
+# external dependencies, and built as its own target so the C sources never
+# inherit the CXX language override applied to SPONGE_SOURCES above.
+if(SPONGE_WITH_XTC)
+  add_library(
+    sponge_xdrfile STATIC
+    ${PROJECT_ROOT_DIR}/SPONGE/third_party/xdrfile/src/xdrfile.c
+    ${PROJECT_ROOT_DIR}/SPONGE/third_party/xdrfile/src/xdrfile_xtc.c)
+  target_include_directories(
+    sponge_xdrfile
+    PUBLIC ${PROJECT_ROOT_DIR}/SPONGE/third_party/xdrfile/include)
+  if(MSVC)
+    target_compile_options(sponge_xdrfile PRIVATE /W0)
+  else()
+    target_compile_options(sponge_xdrfile PRIVATE -w)
+  endif()
+endif()
+
 add_executable(${CURRENT_TARGET} ${SOURCES})
 target_link_libraries(${CURRENT_TARGET} PRIVATE sponge_jit_header sponge_toml)
+if(SPONGE_WITH_XTC)
+  target_compile_definitions(${CURRENT_TARGET} PRIVATE SPONGE_HAS_XTC=1)
+  target_link_libraries(${CURRENT_TARGET} PRIVATE sponge_xdrfile)
+endif()
 if(TARGET HighFive::HighFive)
   target_link_libraries(${CURRENT_TARGET} PRIVATE HighFive::HighFive)
 elseif(TARGET HighFive)

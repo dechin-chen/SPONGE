@@ -177,11 +177,10 @@ inline bool Device_Malloc_And_Copy_Safely(void** d_address, void* h_address,
 #endif
 }
 
-inline FILE* CONTROLLER::Get_Output_File(bool binary, const char* command,
-                                         const char* default_suffix,
-                                         const char* default_filename)
+inline std::string CONTROLLER::Resolve_Output_Path(const char* command,
+                                                   const char* default_suffix,
+                                                   const char* default_filename)
 {
-    FILE* fp = NULL;
     std::string filename;
     if (this->Command_Exist(command))
     {
@@ -200,6 +199,16 @@ inline FILE* CONTROLLER::Get_Output_File(bool binary, const char* command,
             filename = default_filename;
         }
     }
+    return filename;
+}
+
+inline FILE* CONTROLLER::Get_Output_File(bool binary, const char* command,
+                                         const char* default_suffix,
+                                         const char* default_filename)
+{
+    FILE* fp = NULL;
+    const std::string filename =
+        this->Resolve_Output_Path(command, default_suffix, default_filename);
     if (!filename.empty())
     {
         std::string open_type = "w";

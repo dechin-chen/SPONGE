@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -19,6 +20,14 @@
 
 namespace
 {
+std::string Normalize_Trajectory_Format(const char* text)
+{
+    std::string value = text == NULL ? "" : text;
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    return value;
+}
+
 std::string Sanitize_H5MD_Name_For_Output(const std::string& name)
 {
     return SpongeH5OutputRoute::Sanitize_Output_Name(name);
@@ -413,6 +422,22 @@ void MD_INFORMATION::trajectory_output::Initial(CONTROLLER* controller,
     current_crd_synchronized_step = -1;
     h5_output_plan = SpongeH5OutputPlan::Resolve_Output_Plan(controller);
 
+#ifndef SPONGE_HAS_XTC
+    // The XTC writer is a compile-time option. Reject the request explicitly so
+    // that a build without it cannot silently degrade to the binary format.
+    if (controller->Command_Exist("trajectory_format") &&
+        Normalize_Trajectory_Format(controller->Command("trajectory_format")) ==
+            "xtc")
+    {
+        controller->Throw_SPONGE_Error(
+            spongeErrorValueErrorCommand,
+            "MD_INFORMATION::trajectory_output::Initial",
+            "Reason:\n\t'trajectory_format = \"xtc\"' requires a build with "
+            "SPONGE_WITH_XTC=ON; this binary was compiled without the XTC "
+            "writer");
+    }
+#endif
+
     print_virial = false;
     if (controller->Command_Exist("print_pressure"))
     {
@@ -540,6 +565,9 @@ void MD_INFORMATION::trajectory_output::Initial(CONTROLLER* controller,
                                         sizeof(VECTOR) * md_info->atom_numbers);
         }
     }
+#ifdef SPONGE_HAS_XTC
+    Initial_Xtc_Trajectory(controller);
+#endif
     if (write_trajectory_interval != 0 && md_info->mode == md_info->RERUN &&
         controller->Command_Exist("rerun_output_crd"))
     {
@@ -549,7 +577,8 @@ void MD_INFORMATION::trajectory_output::Initial(CONTROLLER* controller,
                                     sizeof(VECTOR) * md_info->atom_numbers);
     }
     else if (write_trajectory_interval != 0 &&
-             h5_output_plan.legacy.Enabled(TRAJ_COMMAND))
+             h5_output_plan.legacy.Enabled(TRAJ_COMMAND) &&
+             !Xtc_Trajectory_Selected())
     {
         crd_traj = controller->Get_Output_File(true, TRAJ_COMMAND, ".dat",
                                                TRAJ_DEFAULT_FILENAME);
@@ -1567,6 +1596,11 @@ void MD_INFORMATION::trajectory_output::Publish_Output(CONTROLLER* controller)
             "MD_INFORMATION::trajectory_output::Publish_Output",
             error_message.c_str());
     }
+#ifdef SPONGE_HAS_XTC
+    // Same cadence as the legacy streams above: Publish_Output runs on every
+    // step, and the writer only flushes when a frame was actually written.
+    Flush_Xtc_Trajectory(controller);
+#endif
 }
 
 void MD_INFORMATION::trajectory_output::Finalize_H5_Trajectory(
@@ -1718,6 +1752,198 @@ void MD_INFORMATION::trajectory_output::Append_Box_Traj_File(FILE* fp)
         }
     }
 }
+
+#ifdef SPONGE_HAS_XTC
+void MD_INFORMATION::trajectory_output::Initial_Xtc_Trajectory(
+    CONTROLLER* controller)
+{
+    xtc_enabled = false;
+    const char* error_by =
+        "MD_INFORMATION::trajectory_output::Initial_Xtc_Trajectory";
+    const std::string format = Normalize_Trajectory_Format(
+        controller->Command_Exist("trajectory_format")
+            ? controller->Command("trajectory_format")
+            : "dat");
+
+    if (format == "dat" || format.empty())
+    {
+        if (controller->Command_Exist("xtc_path"))
+        {
+            controller->Warn(
+                "'xtc_path' is ignored because 'trajectory_format' is not "
+                "'xtc'");
+        }
+        return;
+    }
+    if (format != "xtc")
+    {
+        const std::string reason =
+            "Reason:\n\tunsupported 'trajectory_format' value '" + format +
+            "'; expected 'dat' or 'xtc'";
+        controller->Throw_SPONGE_Error(spongeErrorValueErrorCommand, error_by,
+                                       reason.c_str());
+        return;
+    }
+    if (md_info->mode == md_info->RERUN)
+    {
+        controller->Throw_SPONGE_Error(
+            spongeErrorValueErrorCommand, error_by,
+            "Reason:\n\t'trajectory_format = \"xtc\"' is not supported in "
+            "rerun mode; rerun reads and writes the legacy binary trajectory "
+            "format");
+        return;
+    }
+    if (write_trajectory_interval == 0)
+    {
+        return;
+    }
+
+    xtc_precision = 1000.0f;
+    if (controller->Command_Exist("xtc_precision"))
+    {
+        controller->Check_Float("xtc_precision", error_by);
+        xtc_precision = static_cast<float>(
+            atof(controller->Command("xtc_precision")));
+        if (!(xtc_precision > 0.0f))
+        {
+            controller->Throw_SPONGE_Error(
+                spongeErrorValueErrorCommand, error_by,
+                "Reason:\n\t'xtc_precision' must be positive; 1000.0 means "
+                "0.001 nm (0.01 Angstrom) resolution");
+            return;
+        }
+    }
+    xtc_flush = true;
+    if (controller->Command_Exist("xtc_flush"))
+    {
+        xtc_flush = controller->Get_Bool("xtc_flush", error_by);
+    }
+    xtc_buffer_frames = 10;
+    if (controller->Command_Exist("xtc_buffer_frames"))
+    {
+        controller->Check_Int("xtc_buffer_frames", error_by);
+        xtc_buffer_frames = atoi(controller->Command("xtc_buffer_frames"));
+    }
+    xtc_frame_index = false;
+    if (controller->Command_Exist("xtc_frame_index"))
+    {
+        xtc_frame_index = controller->Get_Bool("xtc_frame_index", error_by);
+    }
+    xtc_append = false;
+    if (controller->Command_Exist("xtc_append"))
+    {
+        xtc_append = controller->Get_Bool("xtc_append", error_by);
+    }
+    if (controller->Command_Exist("crd"))
+    {
+        controller->Warn(
+            "'crd' is ignored because 'trajectory_format' is 'xtc'; the XTC "
+            "trajectory replaces the binary coordinate trajectory");
+    }
+
+    xtc_path =
+        controller->Resolve_Output_Path("xtc_path", ".xtc", "mdcrd.xtc");
+    if (xtc_path.empty())
+    {
+        // Canonical H5 outputs suppress legacy sidecars, but an explicit
+        // trajectory_format = "xtc" still deserves a default filename.
+        xtc_path =
+            controller->Command_Exist("default_out_file_prefix")
+                ? std::string(controller->Command("default_out_file_prefix")) +
+                      ".xtc"
+                : std::string("mdcrd.xtc");
+    }
+
+    std::string error_message;
+    if (!xtc_writer.Open(xtc_path, md_info->atom_numbers, xtc_precision,
+                         xtc_buffer_frames, xtc_append, xtc_frame_index,
+                         &error_message))
+    {
+        controller->Throw_SPONGE_Error(spongeErrorOpenFileFailed, error_by,
+                                       error_message.c_str());
+        return;
+    }
+    xtc_enabled = true;
+    controller->printf(
+        "    XTC trajectory output: %s (precision %.1f, %s%s)\n",
+        xtc_path.c_str(), xtc_precision,
+        xtc_append ? "append" : "overwrite",
+        xtc_frame_index ? ", frame index enabled" : "");
+    if (xtc_frame_index)
+    {
+        controller->printf("    XTC frame index: %s\n",
+                           xtc_writer.Index_Path().c_str());
+    }
+}
+
+void MD_INFORMATION::trajectory_output::Append_Xtc_Traj_File(
+    CONTROLLER* controller)
+{
+    if (!xtc_enabled || !md_info->is_initialized || CONTROLLER::MPI_rank != 0)
+    {
+        return;
+    }
+    md_info->Crd_Vel_Device_To_Host();
+
+    float box_edges[9];
+    Fill_H5MD_Box_Edges(md_info, box_edges);
+
+    std::string error_message;
+    if (!xtc_writer.Append(&md_info->coordinate[0].x, md_info->sys.steps,
+                           static_cast<float>(
+                               md_info->sys.Get_Current_Time(false)),
+                           box_edges, &error_message))
+    {
+        controller->Throw_SPONGE_Error(
+            spongeErrorValueErrorCommand,
+            "MD_INFORMATION::trajectory_output::Append_Xtc_Traj_File",
+            error_message.c_str());
+    }
+}
+
+void MD_INFORMATION::trajectory_output::Flush_Xtc_Trajectory(
+    CONTROLLER* controller)
+{
+    if (!xtc_enabled || !xtc_flush)
+    {
+        return;
+    }
+    std::string error_message;
+    if (!xtc_writer.Flush(&error_message))
+    {
+        controller->Throw_SPONGE_Error(
+            spongeErrorValueErrorCommand,
+            "MD_INFORMATION::trajectory_output::Flush_Xtc_Trajectory",
+            error_message.c_str());
+    }
+}
+
+void MD_INFORMATION::trajectory_output::Finalize_Xtc_Trajectory(
+    CONTROLLER* controller)
+{
+    if (!xtc_enabled)
+    {
+        return;
+    }
+    std::string error_message;
+    if (!xtc_writer.Flush(&error_message))
+    {
+        controller->Throw_SPONGE_Error(
+            spongeErrorValueErrorCommand,
+            "MD_INFORMATION::trajectory_output::Finalize_Xtc_Trajectory",
+            error_message.c_str());
+    }
+    const std::int64_t frames = xtc_writer.Frame_Count();
+    const std::string path = xtc_writer.Path();
+    xtc_writer.Close();
+    xtc_enabled = false;
+    if (CONTROLLER::MPI_rank == 0)
+    {
+        controller->printf("    XTC trajectory closed: %ld frames -> %s\n",
+                           static_cast<long>(frames), path.c_str());
+    }
+}
+#endif
 
 bool MD_INFORMATION::trajectory_output::Should_Write_Legacy_Restart(
     CONTROLLER* controller)
